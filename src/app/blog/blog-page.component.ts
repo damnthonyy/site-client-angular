@@ -1,9 +1,10 @@
 // src/app/blog/blog-page.component.ts
-import { Component, AfterViewInit, OnDestroy, Input, NgZone, ChangeDetectorRef } from '@angular/core';
+import { Component, AfterViewInit, OnDestroy, OnInit, Input, NgZone, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router } from '@angular/router';
+import { Router, NavigationEnd } from '@angular/router';
 import { OsmowScriptService } from '../services/osmow-script.service';
 import { environment } from '../../environments/environment';
+import { Subscription, filter } from 'rxjs';
 
 @Component({
   selector: 'app-blog-page',
@@ -21,7 +22,7 @@ import { environment } from '../../environments/environment';
   standalone: true,
   imports: [CommonModule],
 })
-export class BlogPageComponent implements AfterViewInit, OnDestroy {
+export class BlogPageComponent implements OnInit, AfterViewInit, OnDestroy {
   @Input() siteId?: string;
   @Input() siteUrl?: string;
   @Input() signature?: string;
@@ -44,6 +45,8 @@ export class BlogPageComponent implements AfterViewInit, OnDestroy {
   error: string | null = null;
   scriptUrl: string = '';
   private clickListener?: (e: Event) => void;
+  private routerSubscription?: Subscription;
+  private isInitialized: boolean = false;
 
   constructor(
     private osmowScripts: OsmowScriptService,
@@ -52,7 +55,31 @@ export class BlogPageComponent implements AfterViewInit, OnDestroy {
     private cdr: ChangeDetectorRef
   ) {}
 
+  ngOnInit(): void {
+    // Écouter les changements de navigation pour recharger le contenu
+    this.routerSubscription = this.router.events
+      .pipe(filter(event => event instanceof NavigationEnd))
+      .subscribe((event) => {
+        if (event instanceof NavigationEnd) {
+          // Si on navigue vers /blog et que le composant est déjà initialisé, recharger
+          if (event.url === '/blog' || event.url.startsWith('/blog?')) {
+            if (this.isInitialized) {
+              console.log('Navigation vers /blog détectée, rechargement du contenu...');
+              this.reloadBlog();
+            }
+          }
+        }
+      });
+  }
+
   ngAfterViewInit(): void {
+    if (!this.isInitialized) {
+      this.loadBlog();
+      this.isInitialized = true;
+    }
+  }
+
+  private loadBlog(): void {
     console.log('BlogPageComponent: Chargement du script Osmow...', {
       scriptBase: environment.osmow.scriptBase,
       siteId: this.effectiveSiteId,
@@ -135,6 +162,37 @@ export class BlogPageComponent implements AfterViewInit, OnDestroy {
           this.cdr.detectChanges();
         });
       });
+    }, 100);
+  }
+
+  private reloadBlog(): void {
+    // Nettoyer le contenu précédent
+    const targetDiv = document.getElementById('my-blog');
+    if (targetDiv) {
+      targetDiv.innerHTML = '';
+    }
+
+    // Retirer l'ancien listener
+    if (this.clickListener) {
+      if (targetDiv) {
+        targetDiv.removeEventListener('click', this.clickListener, true);
+      }
+      this.clickListener = undefined;
+    }
+
+    // Retirer l'ancien script
+    this.osmowScripts.removeScript('osmow-blog-script');
+
+    // Réinitialiser l'état
+    this.ngZone.run(() => {
+      this.loading = true;
+      this.error = null;
+      this.cdr.detectChanges();
+    });
+
+    // Recharger le blog
+    setTimeout(() => {
+      this.loadBlog();
     }, 100);
   }
 
@@ -250,6 +308,11 @@ export class BlogPageComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    // Désabonner de la souscription aux événements de navigation
+    if (this.routerSubscription) {
+      this.routerSubscription.unsubscribe();
+    }
+
     this.osmowScripts.removeScript('osmow-blog-script');
     
     // Retirer le listener
