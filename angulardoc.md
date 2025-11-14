@@ -51,7 +51,8 @@ client-site-angular/
 │   │   ├── 📄 app.routes.ts      # Configuration du routing
 │   │   │
 │   │   ├── 📂 services/          # Services Angular
-│   │   │   └── 📄 osmow-script.service.ts  # Service de chargement des scripts
+│   │   │   ├── 📄 osmow-script.service.ts  # Service de chargement des scripts
+│   │   │   └── 📄 osmow-link-interceptor.service.ts  # Service d'interception des liens
 │   │   │
 │   │   ├── 📂 blog/              # Module blog
 │   │   │   ├── 📄 blog-page.component.ts    # Composant page blog
@@ -232,11 +233,13 @@ export class OsmowScriptService {
 ```
 
 **Fonction `appendScript`** :
+- Retourne une `Promise` pour gérer le chargement asynchrone
 - Vérifie si le script existe déjà (évite les doublons)
 - Utilise `Renderer2` d'Angular pour manipuler le DOM de manière sécurisée
 - Crée un élément `<script>` avec les attributs requis
 - Utilise `setAttribute` pour créer les attributs `data-*` (support des tirets)
 - Ajoute le script au `<body>`
+- Gère les événements `onload` et `onerror` pour la gestion d'erreurs
 - Enregistre l'ID du script pour éviter les doublons
 
 **Fonction `removeScript`** :
@@ -249,53 +252,59 @@ export class OsmowScriptService {
 - Osmow nécessite des attributs avec tirets (`data-site-id`)
 - `setAttribute` permet de créer n'importe quel attribut
 
-### `src/app/blog/blog-page.component.ts`
+### `src/app/services/osmow-link-interceptor.service.ts`
 
-Composant pour afficher la page blog Osmow.
+Service Angular pour intercepter et gérer les liens générés par Osmow, permettant une navigation fluide avec Angular Router.
 
 ```typescript
-// src/app/blog/blog-page.component.ts
-import { Component, AfterViewInit, OnDestroy, Input } from '@angular/core';
-import { OsmowScriptService } from '../services/osmow-script.service';
-import { environment } from '../environments/environment';
+// src/app/services/osmow-link-interceptor.service.ts
+import { Injectable, NgZone } from '@angular/core';
+import { Router } from '@angular/router';
 
-@Component({
-  selector: 'app-blog-page',
-  template: `<div id="my-blog"></div>`,
-  standalone: true,
-})
-export class BlogPageComponent implements AfterViewInit, OnDestroy {
-  @Input() siteId: string = environment.osmow.siteId;
-  @Input() siteUrl: string = environment.osmow.siteUrl;
-  @Input() signature: string = environment.osmow.signature;
-  @Input() embedGridOnly: boolean = false;
+@Injectable({ providedIn: 'root' })
+export class OsmowLinkInterceptorService {
+  constructor(
+    private router: Router,
+    private ngZone: NgZone
+  ) {}
 
-  constructor(private osmowScripts: OsmowScriptService) {}
-
-  ngAfterViewInit(): void {
-    this.osmowScripts.appendScript({
-      id: 'osmow-blog-script',
-      src: `${environment.osmow.scriptBase}/blog-embed.js`,
-      dataset: {
-        sign: this.signature,
-        'site-id': this.siteId,
-        url: this.siteUrl,
-        embed: this.embedGridOnly ? 'true' : 'false',
-      },
-    });
+  createLinkInterceptor(containerId: string): (e: Event) => void {
+    // Crée un listener qui intercepte les clics sur les liens Osmow
+    // et les convertit en navigation Angular Router
   }
 
-  ngOnDestroy(): void {
-    this.osmowScripts.removeScript('osmow-blog-script');
+  attachInterceptor(containerId: string, listener: (e: Event) => void): void {
+    // Attache le listener au conteneur spécifié
+  }
+
+  detachInterceptor(containerId: string, listener: (e: Event) => void): void {
+    // Retire le listener du conteneur
   }
 }
 ```
 
-**Fonctionnement** :
-1. Reçoit les props via `@Input()` ou utilise les valeurs par défaut depuis `environment`
-2. Dans `ngAfterViewInit`, charge le script `blog-embed.js` avec les attributs data requis
-3. Le script Osmow injecte le contenu dans `<div id="my-blog" />`
-4. Dans `ngOnDestroy`, supprime le script pour éviter les fuites mémoire
+**Fonctionnalités** :
+- Intercepte les clics sur les liens générés par Osmow
+- Convertit les liens `/blog/slug` en navigation Angular Router
+- Gère les boutons "retour" (`history.back()`, `history.go(-1)`)
+- Gère les liens relatifs (`../blog`, `..`)
+- Permet une navigation SPA sans rechargement de page
+
+### `src/app/blog/blog-page.component.ts`
+
+Composant pour afficher la page blog Osmow avec gestion de la navigation et rechargement automatique.
+
+**Fonctionnalités principales** :
+- Charge le script Osmow blog dynamiquement
+- Gère la navigation avec interception des liens
+- Recharge automatiquement le contenu lors du retour depuis un article
+- Utilise `MutationObserver` pour détecter l'injection du contenu
+- Gère les états de chargement et d'erreur
+
+**Gestion de la navigation** :
+- Écoute les événements `NavigationEnd` du router
+- Recharge automatiquement le blog lorsqu'on revient sur `/blog`
+- Nettoie le contenu précédent avant de recharger
 
 **Attributs data passés au script** :
 - `data-sign` : Signature de sécurité
@@ -303,92 +312,30 @@ export class BlogPageComponent implements AfterViewInit, OnDestroy {
 - `data-url` : URL du site
 - `data-embed` : `"true"` pour grille seule, `"false"` pour page complète
 
+**Note** : Les attributs sont ajoutés à la fois sur le script tag et sur le div cible pour garantir la compatibilité avec le script Osmow.
+
 ### `src/app/blog/article-page.component.ts`
 
-Composant pour afficher un article Osmow spécifique.
+Composant pour afficher un article Osmow spécifique avec gestion de la navigation.
 
-```typescript
-// src/app/blog/article-page.component.ts
-import {
-  Component,
-  AfterViewInit,
-  OnDestroy,
-  Input,
-  OnInit,
-} from '@angular/core';
-import { ActivatedRoute } from '@angular/router';
-import { OsmowScriptService } from '../services/osmow-script.service';
-import { environment } from '../environments/environment';
+**Fonctionnalités principales** :
+- Charge le script Osmow article dynamiquement selon le slug
+- Gère les changements de route (bouton retour du navigateur)
+- Recharge automatiquement l'article si le slug change
+- Intercepte les liens pour une navigation fluide
 
-@Component({
-  selector: 'app-article-page',
-  template: `<div id="my-article"></div>`,
-  standalone: true,
-})
-export class ArticlePageComponent
-  implements OnInit, AfterViewInit, OnDestroy
-{
-  @Input() siteId: string = environment.osmow.siteId;
-  @Input() siteUrl: string = environment.osmow.siteUrl;
-  @Input() signature: string = environment.osmow.signature;
-
-  slug: string = '';
-
-  constructor(
-    private route: ActivatedRoute,
-    private osmowScripts: OsmowScriptService
-  ) {}
-
-  ngOnInit(): void {
-    // Extraire le slug depuis les paramètres de route
-    this.route.params.subscribe((params) => {
-      this.slug = params['slug'] || '';
-    });
-  }
-
-  ngAfterViewInit(): void {
-    if (!this.slug) {
-      console.error('data-article-slug est requis');
-      return;
-    }
-
-    this.osmowScripts.appendScript({
-      id: `osmow-article-${this.slug}`,
-      src: `${environment.osmow.scriptBase}/article-embed.js`,
-      dataset: {
-        sign: this.signature,
-        'site-id': this.siteId,
-        url: this.siteUrl,
-        'article-slug': this.slug,
-      },
-    });
-  }
-
-  ngOnDestroy(): void {
-    if (this.slug) {
-      this.osmowScripts.removeScript(`osmow-article-${this.slug}`);
-    }
-  }
-}
-```
-
-**Fonctionnement** :
-1. Extrait le slug depuis `ActivatedRoute.params` dans `ngOnInit`
-2. Reçoit les props via `@Input()` ou utilise les valeurs par défaut depuis `environment`
-3. Dans `ngAfterViewInit`, charge le script `article-embed.js` avec le slug
-4. Le script Osmow injecte l'article dans `<div id="my-article" />`
-5. Dans `ngOnDestroy`, supprime le script
+**Gestion du slug** :
+- Extrait le slug depuis `ActivatedRoute.params`
+- Écoute les changements de route pour recharger l'article
+- Nettoie l'ancien script et listener avant de charger le nouveau
+- Supporte les slugs simples : `/blog/mon-article`
+- Supporte les slugs avec slashes : `/blog/categorie/mon-article`
 
 **Attributs data passés au script** :
 - `data-sign` : Signature de sécurité
 - `data-site-id` : ID du site
 - `data-url` : URL du site
 - `data-article-slug` : Slug de l'article (extrait de l'URL)
-
-**Gestion du slug** :
-- Supporte les slugs simples : `/blog/mon-article`
-- Supporte les slugs avec slashes : `/blog/categorie/mon-article`
-- Vérifie que le slug existe avant de charger le script
 
 ### `src/app/app.routes.ts`
 
@@ -490,7 +437,19 @@ export class AppComponent {
 
 ### Principe général
 
-L'intégration Osmow fonctionne en chargeant dynamiquement des scripts JavaScript externes qui injectent le contenu dans des conteneurs spécifiques.
+L'intégration Osmow fonctionne en chargeant dynamiquement des scripts JavaScript externes qui injectent le contenu dans des conteneurs spécifiques. L'application utilise des services factorisés pour gérer le chargement des scripts et l'interception des liens, permettant une navigation fluide sans rechargement de page.
+
+### Architecture des services
+
+**OsmowScriptService** : Gère le chargement et la suppression des scripts Osmow
+- Évite les doublons de scripts
+- Gère les promesses de chargement
+- Utilise `Renderer2` pour la manipulation sécurisée du DOM
+
+**OsmowLinkInterceptorService** : Gère l'interception des liens générés par Osmow
+- Convertit les liens en navigation Angular Router
+- Gère les boutons "retour" et les liens relatifs
+- Permet une navigation SPA fluide
 
 ### Flux d'exécution
 
@@ -543,6 +502,15 @@ L'intégration Osmow fonctionne en chargeant dynamiquement des scripts JavaScrip
 - **Slug manquant** : Le composant `ArticlePageComponent` vérifie que le slug existe avant de charger le script
 - **Script déjà chargé** : `OsmowScriptService` vérifie l'existence du script avant de le créer
 - **Nettoyage** : Les scripts sont supprimés dans `ngOnDestroy()` pour éviter les fuites mémoire
+- **Configuration manquante** : Vérification des paramètres Osmow avant le chargement avec messages d'erreur explicites
+- **Détection du contenu** : Utilisation de `MutationObserver` pour détecter l'injection du contenu avec timeout de sécurité
+
+### Gestion de la navigation
+
+- **Rechargement automatique** : Le blog se recharge automatiquement lorsqu'on revient depuis un article
+- **Interception des liens** : Tous les liens générés par Osmow sont interceptés et convertis en navigation Angular Router
+- **Bouton retour** : Gestion des boutons "retour" (`history.back()`, `history.go(-1)`) pour navigation vers `/blog`
+- **Liens relatifs** : Support des liens relatifs (`../blog`, `..`) pour retour au blog
 
 ---
 
@@ -693,13 +661,28 @@ Vérifie le code avec ESLint.
 
 ## 📝 Notes importantes
 
-- Utilisez `Renderer2` d'Angular pour manipuler le DOM de manière sécurisée
-- Les scripts Osmow sont chargés de manière asynchrone (`async defer`)
-- Chaque composant gère son propre cycle de vie de script (chargement/déchargement)
-- Utilisez `ngAfterViewInit` pour charger les scripts après le rendu du composant
-- Utilisez `ngOnDestroy` pour nettoyer les scripts lors du démontage
-- Les variables d'environnement sont remplacées lors du build de production
-- Le service `OsmowScriptService` est un singleton (fourni dans `root`)
+### Bonnes pratiques
+
+- **Utilisez `Renderer2`** d'Angular pour manipuler le DOM de manière sécurisée
+- **Scripts asynchrones** : Les scripts Osmow sont chargés de manière asynchrone (`async defer`)
+- **Cycle de vie** : Chaque composant gère son propre cycle de vie de script (chargement/déchargement)
+- **Hooks Angular** : Utilisez `ngAfterViewInit` pour charger les scripts après le rendu, `ngOnDestroy` pour nettoyer
+- **Variables d'environnement** : Remplacées lors du build de production
+- **Services singleton** : Les services sont fournis dans `root` (singleton)
+
+### Factorisation du code
+
+Le code a été factorisé pour éviter la duplication :
+- **OsmowLinkInterceptorService** : Centralise la logique d'interception des liens (réduit la duplication entre `BlogPageComponent` et `ArticlePageComponent`)
+- **Getters effectifs** : Utilisation de getters pour les valeurs d'environnement avec fallback (évite les problèmes avec `@Input()` optionnels)
+- **Méthodes privées** : Extraction de la logique dans des méthodes réutilisables (`loadBlog()`, `reloadBlog()`)
+
+### Gestion de la navigation
+
+- **Écoute des événements** : Utilisation de `router.events` pour détecter les changements de route
+- **Rechargement intelligent** : Le contenu est rechargé uniquement si nécessaire (évite les rechargements inutiles)
+- **Nettoyage** : Les anciens scripts et listeners sont toujours nettoyés avant de charger de nouveaux contenus
+- **Interception des liens** : Tous les liens Osmow sont interceptés pour une navigation SPA fluide
 
 ---
 

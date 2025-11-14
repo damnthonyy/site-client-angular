@@ -35,12 +35,10 @@ export class OsmowScriptService {
 
       script.onload = () => {
         this.scriptIds.add(params.id);
-        console.log(`Script ${params.id} chargé avec succès`);
         resolve();
       };
 
       script.onerror = (error: ErrorEvent | Event) => {
-        console.error(`Erreur lors du chargement du script ${params.id}:`, error);
         reject(error);
       };
 
